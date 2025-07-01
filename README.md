@@ -9,5 +9,5 @@
 ## How to run
 ```
 # source venv/bin/activate
-# streamlit run fraudLSTM.py
+# streamlit run app.py
 ```
