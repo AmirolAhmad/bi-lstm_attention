@@ -11,7 +11,7 @@ from datasets import load_dataset
 import numpy as np
 
 # --- Sidebar Interactive Controls ---
-st.sidebar.title("🛠️ Tuning Panel")
+st.sidebar.title("🛠️ Tuning Model")
 SEQ_LEN = st.sidebar.slider("Sequence Length", 5, 30, 10, step=1)
 dropout_rate = st.sidebar.slider("Dropout Rate", 0.0, 0.5, 0.2, step=0.05)
 fraud_weight = st.sidebar.slider("Fraud Class Weight", 1.0, 20.0, 5.0, step=0.5)
@@ -29,7 +29,12 @@ def load_data():
     dataset = load_dataset("dazzle-nu/CIS435-CreditCardFraudDetection")
     return dataset["train"].to_pandas()
 
-data = load_data().sample(n=50000, random_state=42).reset_index(drop=True)
+with st.spinner("Loading data... Please wait"):
+    data = load_data()
+st.success("Data loaded!")
+st.caption("Dataset contains credit card transactions with fraud labels from HuggingFace - dazzle-nu/CIS435-CreditCardFraudDetection.")
+
+data = data.sample(n=50000, random_state=42).reset_index(drop=True)
 data = data.sort_values(['cc_num', 'unix_time'])
 if use_hour_feature:
     data['hour'] = pd.to_datetime(data['unix_time'], unit='s').dt.hour
@@ -59,7 +64,11 @@ y_seqs = np.array(y_seqs)
 
 st.write(f"Total sequences: {len(X_seqs)} (Sequence length: {SEQ_LEN})")
 
-X_train, X_test, y_train, y_test = train_test_split(X_seqs, y_seqs, test_size=0.2, stratify=y_seqs, random_state=42)
+# Simpan index asal sebelum split
+original_indices = np.arange(len(y_seqs))
+X_train, X_test, y_train, y_test, idx_train, idx_test = train_test_split(
+    X_seqs, y_seqs, original_indices, test_size=0.2, stratify=y_seqs, random_state=42
+)
 
 # --- Attention Layer ---
 class Attention(Layer):
@@ -107,6 +116,7 @@ with st.spinner("Training model..."):
         class_weight=class_weights,
         verbose=0
     )
+st.success("Training complete!")
 
 # --- Predict ---
 with st.spinner("Predicting..."):
@@ -194,6 +204,115 @@ ax_feat.bar(features, feat_means)
 ax_feat.set_ylabel("Mean Abs. Value")
 ax_feat.set_title("Feature Importance Proxy")
 st.pyplot(fig_feat)
+
+# Card Transaction Timeline Explorer
+st.subheader("🔎 Card Transaction Timeline Explorer")
+card_ids = data['cc_num'].unique()
+selected_card = st.selectbox("Select cc_num (card)", card_ids)
+if selected_card:
+    with st.spinner(f"Loading transactions for {selected_card}..."):
+        card_txn = data[data['cc_num'] == selected_card].sort_values('unix_time')
+        fig_timeline, ax_timeline = plt.subplots(figsize=(10, 2))
+        ax_timeline.plot(card_txn['unix_time'], card_txn['amt'], marker='o', label='Amount', color='blue')
+        fraud_txn = card_txn[card_txn['is_fraud'] == 1]
+        ax_timeline.scatter(fraud_txn['unix_time'], fraud_txn['amt'], color='red', label='Fraud', s=80, zorder=2)
+        ax_timeline.set_xlabel("Unix Time")
+        ax_timeline.set_ylabel("Amount")
+        ax_timeline.set_title(f"Transaction Timeline for Card: {selected_card}")
+        ax_timeline.legend()
+        st.pyplot(fig_timeline)
+        st.dataframe(card_txn[['unix_time', 'amt', 'is_fraud', 'merchant', 'city', 'state', 'zip']])
+
+# Per-Card Fraud Risk Overview
+st.subheader("📊 Per-Card Fraud Risk Overview")
+risk_df = data.groupby('cc_num')['is_fraud'].agg(['count', 'sum'])
+risk_df.rename(columns={'count':'Total Txn', 'sum':'Fraud Txn'}, inplace=True)
+risk_df['Fraud Rate (%)'] = (risk_df['Fraud Txn'] / risk_df['Total Txn'] * 100).round(2)
+st.dataframe(risk_df.sort_values('Fraud Rate (%)', ascending=False).head(10))
+
+# Fraud vs Non-Fraud Transaction Map
+st.subheader("🗺️ Fraud vs Non-Fraud Transaction Map")
+map_sample = data.sample(1000, random_state=1)
+map_sample.rename(columns={'long': 'lon'}, inplace=True)
+st.map(map_sample[['lat', 'lon']])
+fraud_map = map_sample[map_sample['is_fraud'] == 1]
+st.map(fraud_map[['lat', 'lon']])
+
+# Fraud by Hour
+st.subheader("⏰ Fraud Occurrence by Hour of Day")
+data['hour'] = pd.to_datetime(data['unix_time'], unit='s').dt.hour
+fraud_by_hour = data[data['is_fraud']==1]['hour'].value_counts().sort_index()
+fig_hour, ax_hour = plt.subplots()
+ax_hour.bar(fraud_by_hour.index, fraud_by_hour.values)
+ax_hour.set_xlabel("Hour of Day")
+ax_hour.set_ylabel("Number of Frauds")
+st.pyplot(fig_hour)
+
+# Fraud by Day
+st.subheader("📆 Fraud Occurrence by Day of Week")
+data['day'] = pd.to_datetime(data['unix_time'], unit='s').dt.day_name()
+fraud_by_day = data[data['is_fraud']==1]['day'].value_counts()[['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']]
+fig_day, ax_day = plt.subplots()
+ax_day.bar(fraud_by_day.index, fraud_by_day.values)
+ax_day.set_xlabel("Day of Week")
+ax_day.set_ylabel("Number of Frauds")
+st.pyplot(fig_day)
+
+# --- New Section: Predicted Fraud by Hour ---
+st.subheader("📈 Predicted Fraud by Hour of Day")
+pred_hour = pd.to_datetime(data.iloc[idx_test]['unix_time'], unit='s').dt.hour
+pred_hour_df = pd.DataFrame({'hour': pred_hour, 'y_pred': y_pred})
+pred_hour_counts = pred_hour_df[pred_hour_df['y_pred'] == 1]['hour'].value_counts().sort_index()
+fig_pred_hour, ax_pred_hour = plt.subplots()
+ax_pred_hour.bar(pred_hour_counts.index, pred_hour_counts.values)
+ax_pred_hour.set_xlabel("Hour of Day")
+ax_pred_hour.set_ylabel("# Predicted Frauds")
+st.pyplot(fig_pred_hour)
+
+# --- New Section: Predicted Fraud by Day of Week ---
+st.subheader("📆 Predicted Fraud by Day of Week")
+pred_day = pd.to_datetime(data.iloc[idx_test]['unix_time'], unit='s').dt.day_name()
+pred_day_df = pd.DataFrame({'day': pred_day, 'y_pred': y_pred})
+pred_day_counts = pred_day_df[pred_day_df['y_pred'] == 1]['day'].value_counts()
+pred_day_counts = pred_day_counts.reindex(['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'])
+fig_pred_day, ax_pred_day = plt.subplots()
+ax_pred_day.bar(pred_day_counts.index, pred_day_counts.values)
+ax_pred_day.set_xlabel("Day of Week")
+ax_pred_day.set_ylabel("# Predicted Frauds")
+st.pyplot(fig_pred_day)
+
+# --- New Section: Predicted Fraud Map ---
+st.subheader("🗺️ Predicted Fraud Map")
+pred_map_df = data.iloc[idx_test].copy()
+pred_map_df['y_pred'] = y_pred
+pred_map_df = pred_map_df.rename(columns={'long': 'lon'})
+fraud_preds = pred_map_df[pred_map_df['y_pred'] == 1]
+st.map(fraud_preds[['lat', 'lon']])
+
+# --- New Section: Predicted Fraud Rate per Card ---
+st.subheader("📊 Top Cards by Predicted Fraud Rate")
+pred_card_df = pd.DataFrame({'cc_num': data.iloc[idx_test]['cc_num'], 'y_pred': y_pred})
+pred_card_risk = pred_card_df.groupby('cc_num')['y_pred'].agg(['count','sum'])
+pred_card_risk['Predicted Fraud Rate (%)'] = (pred_card_risk['sum'] / pred_card_risk['count'] * 100).round(2)
+st.dataframe(pred_card_risk.sort_values('Predicted Fraud Rate (%)', ascending=False).head(10))
+
+# --- New Section: Predicted Timeline Explorer ---
+st.subheader("🔎 Predicted Timeline Explorer")
+selected_pred_card = st.selectbox("Select Card Number (Predicted)", pred_card_df['cc_num'].unique())
+if selected_pred_card:
+    selected_df = data.iloc[idx_test].copy()
+    selected_df['y_pred'] = y_pred
+    card_txn = selected_df[selected_df['cc_num'] == selected_pred_card].sort_values('unix_time')
+    fig_pred_timeline, ax_pred_timeline = plt.subplots(figsize=(10, 2))
+    ax_pred_timeline.plot(card_txn['unix_time'], card_txn['amt'], marker='o', label='Amount', color='blue')
+    fraud_txn = card_txn[card_txn['y_pred'] == 1]
+    ax_pred_timeline.scatter(fraud_txn['unix_time'], fraud_txn['amt'], color='orange', label='Predicted Fraud', s=80)
+    ax_pred_timeline.set_xlabel("Unix Time")
+    ax_pred_timeline.set_ylabel("Amount")
+    ax_pred_timeline.set_title(f"Predicted Timeline for Card: {selected_pred_card}")
+    ax_pred_timeline.legend()
+    st.pyplot(fig_pred_timeline)
+    st.dataframe(card_txn[['unix_time', 'amt', 'y_pred', 'merchant', 'city', 'state', 'zip']])
 
 # Save CSV
 st.subheader("💾 Download 100 Sample Predictions")
