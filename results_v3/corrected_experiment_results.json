@@ -1,0 +1,42 @@
+{
+  "dataset": "dazzle-nu/CIS435-CreditCardFraudDetection",
+  "rows_used": 1048575,
+  "full_dataset_run": true,
+  "features": [
+    "amt",
+    "city_pop",
+    "lat",
+    "long",
+    "merch_lat",
+    "merch_long",
+    "distance_km",
+    "hour_sin",
+    "hour_cos",
+    "weekday_sin",
+    "weekday_cos"
+  ],
+  "sequence_length": 10,
+  "sequence_stride": 10,
+  "split": {
+    "train_cutoff_utc": "2012-11-10T01:14:07+00:00",
+    "validation_cutoff_utc": "2012-12-24T07:48:10+00:00",
+    "rows": {"train": 734002, "validation": 157286, "test": 157287},
+    "fraud_rows": {"train": 4349, "validation": 704, "test": 953}
+  },
+  "sequence_counts": {
+    "train": {"sequences": 72998, "fraud_sequences": 407, "legitimate_sequences": 72591, "cards_with_fewer_than_sequence_length": 17},
+    "validation": {"sequences": 15331, "fraud_sequences": 63, "legitimate_sequences": 15268, "cards_with_fewer_than_sequence_length": 3},
+    "test": {"sequences": 15342, "fraud_sequences": 92, "legitimate_sequences": 15250, "cards_with_fewer_than_sequence_length": 3}
+  },
+  "class_weight": {"0": 1.0, "1": 178.35626535626537},
+  "epochs_completed": {"LSTM": 12, "BiLSTM": 6, "BiLSTM + Attention": 5},
+  "metrics": [
+    {"model": "Decision Tree", "threshold": 0.9962760822921767, "accuracy": 0.9964150697431886, "precision": 0.8490566037735849, "recall": 0.4891304347826087, "f1": 0.6206896551724138, "auroc": 0.8564686386315038, "auprc": 0.5212436493285171, "training_seconds": 6.361723340116441, "inference_ms_per_sequence_median": 0.00022398444343707524, "tn": 15242, "fp": 8, "fn": 47, "tp": 45},
+    {"model": "Linear SVM", "threshold": 0.9999998534779361, "accuracy": 0.9950462781905879, "precision": 0.5952380952380952, "recall": 0.5434782608695652, "f1": 0.5681818181818182, "auroc": 0.9506286528866714, "auprc": 0.4981131220988751, "training_seconds": 2.2142529049888253, "inference_ms_per_sequence_median": 0.00028259751161385793, "tn": 15216, "fp": 34, "fn": 42, "tp": 50},
+    {"model": "Random Forest", "threshold": 0.31712466345722085, "accuracy": 0.9977838612957893, "precision": 0.8918918918918919, "recall": 0.717391304347826, "f1": 0.7951807228915663, "auroc": 0.9890609408410549, "auprc": 0.8604437367522733, "training_seconds": 20.561802054056898, "inference_ms_per_sequence_median": 0.06664294505753787, "tn": 15242, "fp": 8, "fn": 26, "tp": 66},
+    {"model": "LSTM", "threshold": 0.9955612421035767, "accuracy": 0.9974579585451702, "precision": 0.8840579710144928, "recall": 0.6630434782608695, "f1": 0.7577639751552795, "auroc": 0.9719871703492515, "auprc": 0.8114104377347313, "training_seconds": 57.36791539913975, "inference_ms_per_sequence_median": 0.14701769623570726, "tn": 15242, "fp": 8, "fn": 31, "tp": 61},
+    {"model": "BiLSTM", "threshold": 0.9850682020187378, "accuracy": 0.9964150697431886, "precision": 0.6947368421052632, "recall": 0.717391304347826, "f1": 0.7058823529411765, "auroc": 0.9763399857448325, "auprc": 0.731232837646943, "training_seconds": 53.71340089594014, "inference_ms_per_sequence_median": 0.1429832245776197, "tn": 15221, "fp": 29, "fn": 26, "tp": 66},
+    {"model": "BiLSTM + Attention", "threshold": 0.9891935586929321, "accuracy": 0.9970016946943032, "precision": 0.8108108108108109, "recall": 0.6521739130434783, "f1": 0.7228915662650602, "auroc": 0.9759942979330006, "auprc": 0.7395055124904545, "training_seconds": 96.26837011403404, "inference_ms_per_sequence_median": 0.16650085945002502, "tn": 15236, "fp": 14, "fn": 32, "tp": 60}
+  ],
+  "tensorflow": "2.19.0"
+}
