@@ -10,7 +10,10 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import tensorflow as tf
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import SGDClassifier
 from sklearn.metrics import confusion_matrix
+from sklearn.tree import DecisionTreeClassifier
 from tensorflow import keras
 
 from experiment_v3 import (
@@ -25,6 +28,8 @@ from experiment_v3 import (
     make_sequences,
     scale_partitions,
     set_reproducibility,
+    sklearn_predict_with_latency,
+    sklearn_score,
 )
 
 
@@ -67,33 +72,81 @@ x_test, y_test, test_meta = make_sequences(test, int(sequence_length), int(seque
 negative, positive = np.bincount(y_train, minlength=2)
 class_weight = {0: 1.0, 1: float(negative / max(positive, 1))}
 
-progress.progress(40, text="Training BiLSTM with learned attention...")
-model = build_model("bilstm_attention", int(sequence_length), len(FEATURES))
-callbacks = [
-    keras.callbacks.EarlyStopping(monitor="val_auprc", mode="max", patience=3, restore_best_weights=True),
-    keras.callbacks.ReduceLROnPlateau(monitor="val_auprc", mode="max", factor=0.5, patience=2, min_lr=1e-5),
-]
-begin = time.perf_counter()
-history = model.fit(
-    x_train,
-    y_train,
-    validation_data=(x_val, y_val),
-    epochs=int(epochs),
-    batch_size=int(batch_size),
-    class_weight=class_weight,
-    shuffle=False,
-    callbacks=callbacks,
-    verbose=0,
-)
-training_seconds = time.perf_counter() - begin
+results = []
+test_scores = {}
+flat_train = x_train.reshape(len(x_train), -1)
+flat_val = x_val.reshape(len(x_val), -1)
+flat_test = x_test.reshape(len(x_test), -1)
+classical_models = {
+    "Decision Tree": DecisionTreeClassifier(
+        max_depth=16, min_samples_leaf=5, class_weight="balanced", random_state=42
+    ),
+    "Linear SVM": SGDClassifier(
+        loss="hinge", class_weight="balanced", max_iter=1500, tol=1e-4, random_state=42
+    ),
+    "Random Forest": RandomForestClassifier(
+        n_estimators=100,
+        max_depth=18,
+        min_samples_leaf=3,
+        class_weight="balanced_subsample",
+        n_jobs=-1,
+        random_state=42,
+    ),
+}
+for index, (name, classifier) in enumerate(classical_models.items()):
+    progress.progress(35 + index * 5, text=f"Training {name} baseline...")
+    begin = time.perf_counter()
+    classifier.fit(flat_train, y_train)
+    train_seconds = time.perf_counter() - begin
+    threshold = choose_threshold(y_val, sklearn_score(classifier, flat_val))
+    score, model_latency = sklearn_predict_with_latency(classifier, flat_test, int(batch_size))
+    results.append(compute_metrics(name, y_test, score, threshold, train_seconds, model_latency))
+    test_scores[name] = score
 
-progress.progress(85, text="Selecting the threshold on validation data...")
-validation_score = model.predict(x_val, batch_size=int(batch_size), verbose=0).reshape(-1)
-threshold = choose_threshold(y_val, validation_score)
-test_score, latency = keras_predict_with_latency(model, x_test, int(batch_size))
-result = compute_metrics(
-    "BiLSTM + Attention", y_test, test_score, threshold, training_seconds, latency
-)
+trained_models = {}
+histories = {}
+for index, (kind, name) in enumerate(
+    [("lstm", "LSTM"), ("bilstm", "BiLSTM"), ("bilstm_attention", "BiLSTM + Attention")]
+):
+    progress.progress(52 + index * 12, text=f"Training {name}...")
+    tf.keras.backend.clear_session()
+    set_reproducibility()
+    candidate = build_model(kind, int(sequence_length), len(FEATURES))
+    callbacks = [
+        keras.callbacks.EarlyStopping(monitor="val_auprc", mode="max", patience=3, restore_best_weights=True),
+        keras.callbacks.ReduceLROnPlateau(monitor="val_auprc", mode="max", factor=0.5, patience=2, min_lr=1e-5),
+    ]
+    begin = time.perf_counter()
+    candidate_history = candidate.fit(
+        x_train,
+        y_train,
+        validation_data=(x_val, y_val),
+        epochs=int(epochs),
+        batch_size=int(batch_size),
+        class_weight=class_weight,
+        shuffle=False,
+        callbacks=callbacks,
+        verbose=0,
+    )
+    train_seconds = time.perf_counter() - begin
+    validation_score = candidate.predict(x_val, batch_size=int(batch_size), verbose=0).reshape(-1)
+    threshold = choose_threshold(y_val, validation_score)
+    score, model_latency = keras_predict_with_latency(candidate, x_test, int(batch_size))
+    results.append(compute_metrics(name, y_test, score, threshold, train_seconds, model_latency))
+    test_scores[name] = score
+    trained_models[name] = candidate
+    histories[name] = candidate_history
+
+model = trained_models["BiLSTM + Attention"]
+history = histories["BiLSTM + Attention"]
+result = next(row for row in results if row["model"] == "BiLSTM + Attention")
+threshold = result["threshold"]
+test_score = test_scores["BiLSTM + Attention"]
+training_seconds = result["training_seconds"]
+latency = {
+    "median_ms": result["inference_ms_per_sequence_median"],
+    "p95_ms": result["inference_ms_per_sequence_p95_batch"],
+}
 progress.progress(100, text="Experiment complete")
 
 st.subheader("Auditable data split")
@@ -120,6 +173,15 @@ for col, label, key in zip(
     ["accuracy", "precision", "recall", "f1", "auroc", "auprc"],
 ):
     col.metric(label, f"{100 * result[key]:.2f}%")
+
+comparison = pd.DataFrame(results)
+st.write("Model comparison on the same chronological test partition")
+st.dataframe(
+    comparison[["model", "accuracy", "precision", "recall", "f1", "auroc", "auprc", "training_seconds"]]
+    .assign(**{key: lambda table, key=key: (100 * table[key]).round(2) for key in ["accuracy", "precision", "recall", "f1", "auroc", "auprc"]}),
+    hide_index=True,
+    use_container_width=True,
+)
 
 left, right = st.columns(2)
 with left:
@@ -162,10 +224,12 @@ export = {
     "split": split_meta,
     "sequence_counts": {"train": train_meta, "validation": val_meta, "test": test_meta},
     "class_weight": class_weight,
-    "epochs_completed": len(history.history["loss"]),
-    "metrics": result,
+    "epochs_completed": {name: len(item.history["loss"]) for name, item in histories.items()},
+    "metrics": results,
     "tensorflow": tf.__version__,
 }
+with st.expander("Machine-readable results", expanded=True):
+    st.code(json.dumps(export, indent=2), language="json")
 st.download_button(
     "Download experiment JSON",
     data=json.dumps(export, indent=2),
