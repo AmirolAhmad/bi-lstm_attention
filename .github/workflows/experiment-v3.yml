@@ -1,0 +1,48 @@
+name: Leakage-controlled fraud experiment
+
+on:
+  push:
+    branches:
+      - experiment/reviewer-fixes
+    paths:
+      - experiment_v3.py
+      - requirements-experiment.txt
+      - .github/workflows/experiment-v3.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  experiment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      TF_CPP_MIN_LOG_LEVEL: "2"
+      TF_DETERMINISTIC_OPS: "1"
+      PYTHONHASHSEED: "42"
+    steps:
+      - name: Check out experiment branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-experiment.txt
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-experiment.txt
+
+      - name: Run full chronological experiment
+        run: python experiment_v3.py --output-dir results_v3 --sequence-length 10 --epochs 12 --batch-size 512
+
+      - name: Upload auditable results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reviewer-experiment-v3
+          path: results_v3/
+          if-no-files-found: warn
+          retention-days: 30
